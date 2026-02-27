@@ -17,7 +17,7 @@ const path = require('path');
 const { Pool } = require('pg'); // NAYA: Database se connect karne ke liye
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware setup
 app.use(cors());
