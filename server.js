@@ -224,6 +224,32 @@ app.post('/api/signup', express.json(), async (req, res) => {
     }
 });
 
+// -----------------------------------------------------------------
+// 📝 NAYA: SMART SIGNUP API (Naya Account Banane Ke Liye)
+// -----------------------------------------------------------------
+app.post('/api/signup', async (req, res) => {
+  const { fullName, email, password } = req.body;
+  
+  try {
+    // 1. Check karo ki yeh email pehle se toh nahi hai
+    const checkUser = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (checkUser.rows.length > 0) {
+      return res.status(400).json({ error: "❌ Yeh Email pehle se register hai! Login karein." });
+    }
+
+    // 2. Naya user Database mein daalo (Role hamesha 'Citizen' rahega default)
+    const newUser = await pool.query(
+      "INSERT INTO users (full_name, email, password, role, department) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [fullName, email, password, 'Citizen', 'None']
+    );
+
+    res.status(200).json({ message: "✅ Account successfully ban gaya!", user: newUser.rows[0] });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "❌ Server Error! Database se connect nahi hua." });
+  }
+});
+
 // 🚨 NAYA CODE: User Login (Account mein ghusna)
 // 🚨 NAYA SUPER LOGIN: Ab yeh Role aur Department bhi check karega
 app.post('/api/login', express.json(), async (req, res) => {
