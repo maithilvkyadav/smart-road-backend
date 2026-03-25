@@ -1,20 +1,14 @@
 const nodemailer = require('nodemailer');
-
-// 📧 EMAIL BHEJNE WALA SYSTEM (Nodemailer Setup)
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: 'codertech199@gmail.com', // 🚨 Yahan apna koi Gmail daalna
-        pass: 'jdsb xpmt oasq hfdw'      // 🚨 Yahan Gmail ka 'App Password' aayega
-    }
-});
-
 const axios = require('axios');
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
-const { Pool } = require('pg'); // NAYA: Database se connect karne ke liye
+const { Pool } = require('pg'); 
+
+// 🚨 NAYA: Cloudinary Packages
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,61 +17,67 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// 🚨 YAHAN DHYAN DEIN: Apna PostgreSQL ka password yahan dalein
-// 🚨 NAYA JADOO: Cloud Database Connection (Neon)
-const pool = new Pool({
-    // 👇 Neeche wali line mein single quotes (' ') ke andar apna lamba wala Neon link paste kar dena
-    connectionString: 'postgresql://neondb_owner:npg_b7efyuR1aHAj@ep-polished-fog-ak71n56j-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
-    ssl: {
-        rejectUnauthorized: false // Cloud DB ke liye yeh zaroori hai
+// 📧 EMAIL BHEJNE WALA SYSTEM (Nodemailer Setup)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: 'codertech199@gmail.com', 
+        pass: 'jdsb xpmt oasq hfdw'      
     }
 });
 
-// Database connection check karne ke liye
+// ☁️ CLOUDINARY SETUP (🚨 BHAU, YAHAN APNI KEYS DAALNA MAT BHOOLNA)
+cloudinary.config({ 
+  cloud_name: 'Root', 
+  api_key: '935532686615351', 
+  api_secret: 'q2h9VkhCQJnRk8_hSY4B2u9cljE' 
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'SmartRoad_Uploads',
+    allowed_formats: ['jpg', 'png', 'jpeg'],
+  },
+});
+const upload = multer({ storage: storage });
+
+// 🗄️ DATABASE CONNECTION (Neon Cloud)
+const pool = new Pool({
+    connectionString: 'postgresql://neondb_owner:npg_b7efyuR1aHAj@ep-polished-fog-ak71n56j-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
+    ssl: {
+        rejectUnauthorized: false 
+    }
+});
+
 pool.connect()
     .then(() => console.log('📦 Database Connected Successfully!'))
     .catch(err => console.error('Database connection error:', err.stack));
 
-// Multer setup images ko save karne ke liye
-const storage = multer.diskStorage({
-    destination: './uploads/',
-    filename: (req, file, cb) => {
-        cb(null, 'damage-' + Date.now() + path.extname(file.originalname));
-    }
-});
-const upload = multer({ storage: storage });
 
-// API Route: Naya updated route jo DB mein data save karega
-// 🚨 UPDATE KIYA HUA CODE: Ab complaint ke sath user ka naam bhi save hoga
-// 🧠 NAYA JADOO: AI Auto-Routing System
-// Yeh function automatically tay karega ki complaint kisko jayegi
+// 🧠 AI Auto-Routing System
 function autoAssignDepartment(description, lat, lng) {
     let desc = (description || '').toLowerCase();
-    
-    // Rule 1: Agar details mein 'nh', 'highway', 'toll' ya 'expressway' hai -> NHAI
     if (desc.includes('nh') || desc.includes('highway') || desc.includes('toll')) {
         return 'NHAI';
-    } 
-    // Rule 2: Agar local city ka area hai jaise 'gali', 'colony', 'chowk', 'market' -> Municipal Corp
-    else if (desc.includes('gali') || desc.includes('colony') || desc.includes('chowk') || desc.includes('market')) {
+    } else if (desc.includes('gali') || desc.includes('colony') || desc.includes('chowk') || desc.includes('market')) {
         return 'Municipal Corp';
-    } 
-    // Rule 3: Baaki sab main sadkein -> PWD
-    else {
+    } else {
         return 'PWD';
     }
 }
 
-// 🧠 ULTIMATE JADOO: App -> Node.js -> Python AI -> Database
-// 🚨 UPDATE 1: Nayi complaint aate hi Department ko Alert jayega
-// 🚨 THE ULTIMATE FLOW: Nayi complaint aate hi Dept aur Admin DONO ko Email jayega
+// -----------------------------------------------------------------
+// 🚀 1. REPORT DAMAGE (CITIZEN UPLOAD) -> Ab Cloudinary par jayega
+// -----------------------------------------------------------------
 app.post('/api/report-damage', upload.single('roadImage'), async (req, res) => {
     const { latitude, longitude, description, reportedBy } = req.body;
-    const imageUrl = req.file.path;
     
-    // AI se Department assign hoga (Ya PWD default rakhna chaho toh rakh sakte ho)
+    // 🚨 Cloudinary direct pura URL deta hai req.file.path mein
+    const imageUrl = req.file.path; 
+    
     const assignedDept = autoAssignDepartment(description, latitude, longitude);
-    let finalSeverity = 'Pending'; // 🚨 Ab user ko 'Pending' dikhega!
+    let finalSeverity = 'Pending'; 
 
     try {
         const result = await pool.query(
@@ -88,31 +88,26 @@ app.post('/api/report-damage', upload.single('roadImage'), async (req, res) => {
         const newCaseId = result.rows[0].id;
         console.log(`🚀 Naya Case #${newCaseId} Saved! | Dept: ${assignedDept}`);
 
-        // ---------------------------------------------------------
-        // 📧 DAAKIYA KA KAAM 1: DEPARTMENT KO ALERT BHEJO
-        // ---------------------------------------------------------
+        // Email to Department
         const deptUser = await pool.query("SELECT email FROM users WHERE role = 'Department' AND department = $1", [assignedDept]);
         if (deptUser.rows.length > 0) {
             transporter.sendMail({
-                from: 'Smart Road System <tumhara.email@gmail.com>', 
+                from: 'Smart Road System <codertech199@gmail.com>', 
                 to: deptUser.rows[0].email,
                 subject: `🚨 ALERT: Naya Kaam Assign Hua Hai (Case #${newCaseId})`,
                 text: `Hello ${assignedDept} Team,\n\nEk nayi road damage report aayi hai.\n\nKripya theek karne ke baad portal par photo upload karein.\n\nRegards,\nAI System`
             });
         }
 
-        // ---------------------------------------------------------
-        // 📧 DAAKIYA KA KAAM 2: ADMIN KO BHI SAATH MEIN ALERT BHEJO
-        // ---------------------------------------------------------
+        // Email to Admin
         const adminUser = await pool.query("SELECT email FROM users WHERE role = 'Admin'");
         if (adminUser.rows.length > 0) {
             transporter.sendMail({
-                from: 'Smart Road System <tumhara.email@gmail.com>', 
+                from: 'Smart Road System <codertech199@gmail.com>', 
                 to: adminUser.rows[0].email,
                 subject: `📋 ADMIN UPDATE: Naya Case #${newCaseId} Assign Hua`,
                 text: `Hello Admin,\n\nEk nayi complaint aayi hai aur automatically ${assignedDept} ko assign kar di gayi hai.\n\nReported By: ${reportedBy}\n\nJab department kaam pura karega, aapko doosra alert aayega.\n\nRegards,\nAI System`
             });
-            console.log(`✉️ Email sent to ${assignedDept} AND Admin!`);
         }
 
         res.status(200).json({ message: "Upload successful", id: newCaseId });
@@ -122,39 +117,44 @@ app.post('/api/report-damage', upload.single('roadImage'), async (req, res) => {
     }
 });
 
-// NAYA CODE: Server ko permission dena ki map par photos dikha sake
-app.use('/uploads', express.static('uploads'));
+// -----------------------------------------------------------------
+// 🗺️ 2. ADMIN DASHBOARD KE LIYE SARI COMPLAINTS BHEJNA (Missing tha!)
+// -----------------------------------------------------------------
+app.get('/api/complaints', async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM complaints ORDER BY id DESC");
+        res.status(200).json(result.rows);
+    } catch (error) {
+        console.error("Fetch error:", error);
+        res.status(500).json({ error: "Data laane mein problem aayi" });
+    }
+});
 
-
-// 🚨 NAYA CODE: Gaddha theek hone (Resolve) ka status update karne ke liye API
-// 🚨 UPDATE KIYA HUA CODE: Gaddha theek hote hi Email jayega
+// -----------------------------------------------------------------
+// ✅ 3. RESOLVE COMPLAINT & SEND CONGRATS EMAIL
+// -----------------------------------------------------------------
 app.put('/api/complaints/:id/resolve', async (req, res) => {
     const { id } = req.params;
     try {
-        // 1. Pehle Gaddha 'Resolved' mark karo
         await pool.query("UPDATE complaints SET status = 'Resolved' WHERE id = $1", [id]);
         
-        // 2. Ab check karo yeh gaddha kisne report kiya tha (Taaki uska email nikal sakein)
         const complaintData = await pool.query("SELECT reported_by, description FROM complaints WHERE id = $1", [id]);
         const userName = complaintData.rows[0].reported_by;
         const problemDetails = complaintData.rows[0].description;
 
-        // 3. User Table se us insaan ka asli Email ID nikalo
         const userData = await pool.query("SELECT email FROM users WHERE full_name = $1", [userName]);
         
-        // 4. Agar User ka Email mil gaya, toh usko turant Email bhej do! 🚀
         if (userData.rows.length > 0) {
             const userEmail = userData.rows[0].email;
-            
             const mailOptions = {
-                from: 'Smart Road AI Mission <tumhara.email@gmail.com>', // Yahan apna email rakhna
+                from: 'Smart Road AI Mission <codertech199@gmail.com>', 
                 to: userEmail,
                 subject: `✅ Good News: Issue #${id} is Resolved!`,
                 text: `Hello ${userName},\n\nAapne jo problem report ki thi:\n"${problemDetails}"\n\nWoh ab successfully PWD / NHAI dwara THEEK KAR DI GAYI HAI! 🛣️✨\n\nSmart Road Mission ka hissa banne ke liye dhanyawad.\n\nRegards,\nAI Command Center`
             };
 
             transporter.sendMail(mailOptions, (error, info) => {
-                if (error) { console.log("📧 Email bhejne mein error:", error); } 
+                if (error) { console.log("📧 Email error:", error); } 
                 else { console.log("📧 Success! Email sent to:", userEmail); }
             });
         }
@@ -166,8 +166,9 @@ app.put('/api/complaints/:id/resolve', async (req, res) => {
     }
 });
 
-
-// 🚨 NAYA CODE: Gaddha kisi Department ko Assign karne ki API
+// -----------------------------------------------------------------
+// 📌 4. MANUAL ASSIGN DEPARTMENT
+// -----------------------------------------------------------------
 app.put('/api/complaints/:id/assign', express.json(), async (req, res) => {
     const { id } = req.params;
     const { department } = req.body;
@@ -180,26 +181,25 @@ app.put('/api/complaints/:id/assign', express.json(), async (req, res) => {
     }
 });
 
-// 🚧 NAYA CODE: Department jab kaam poora karke nayi photo upload karega
-// 🚨 UPDATE 2: Worker kaam karega toh Admin ko Alert jayega
+// -----------------------------------------------------------------
+// 👷‍♂️ 5. DEPARTMENT WORK DONE (UPLOAD AFTER-IMAGE) -> Cloudinary
+// -----------------------------------------------------------------
 app.post('/api/complaints/:id/work-done', upload.single('afterImage'), async (req, res) => {
     const { id } = req.params;
-    const afterImageUrl = req.file.path;
+    const afterImageUrl = req.file.path; // Cloudinary URL
 
     try {
         await pool.query("UPDATE complaints SET status = 'Verification Pending', after_image_url = $1 WHERE id = $2", [afterImageUrl, id]);
         console.log(`👷‍♂️ Case #${id}: Worker ne kaam kar diya!`);
 
-        // 📧 DAAKIYA KA KAAM: Admin ko dhoondho aur Email bhejo
         const adminUser = await pool.query("SELECT email FROM users WHERE role = 'Admin'");
         if (adminUser.rows.length > 0) {
             transporter.sendMail({
-                from: 'Smart Road AI Command <tumhara.email@gmail.com>',
+                from: 'Smart Road AI Command <codertech199@gmail.com>',
                 to: adminUser.rows[0].email,
                 subject: `🧐 VERIFY: Case #${id} Kaam Pura Ho Gaya Hai!`,
                 text: `Hello Admin,\n\nDepartment ne Case #${id} ka gaddha theek kar diya hai aur nayi photo upload kar di hai.\n\nKripya apne Admin Dashboard par jayein, 'Before & After' photo check karein, aur Resolve button dabayein.\n\nRegards,\nAI System`
             });
-            console.log("✉️ Email sent to Admin for verification!");
         }
 
         res.status(200).json({ message: "Work submitted for verification!" });
@@ -209,35 +209,18 @@ app.post('/api/complaints/:id/work-done', upload.single('afterImage'), async (re
     }
 });
 
-// 🚨 NAYA CODE: User Signup (Naya account banana)
-app.post('/api/signup', express.json(), async (req, res) => {
-    const { fullName, email, password } = req.body;
-    try {
-        const result = await pool.query(
-            "INSERT INTO users (full_name, email, password) VALUES ($1, $2, $3) RETURNING id, full_name",
-            [fullName, email, password]
-        );
-        res.status(200).json({ message: "Account ban gaya!", user: result.rows[0] });
-    } catch (error) {
-        console.error("Signup error:", error);
-        res.status(500).json({ error: "Account nahi ban paya. Shayad email pehle se use hui hai." });
-    }
-});
-
 // -----------------------------------------------------------------
-// 📝 NAYA: SMART SIGNUP API (Naya Account Banane Ke Liye)
+// 📝 6. SMART SIGNUP (Naya Account Banane Ke Liye)
 // -----------------------------------------------------------------
 app.post('/api/signup', async (req, res) => {
   const { fullName, email, password } = req.body;
   
   try {
-    // 1. Check karo ki yeh email pehle se toh nahi hai
     const checkUser = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     if (checkUser.rows.length > 0) {
       return res.status(400).json({ error: "❌ Yeh Email pehle se register hai! Login karein." });
     }
 
-    // 2. Naya user Database mein daalo (Role hamesha 'Citizen' rahega default)
     const newUser = await pool.query(
       "INSERT INTO users (full_name, email, password, role, department) VALUES ($1, $2, $3, $4, $5) RETURNING *",
       [fullName, email, password, 'Citizen', 'None']
@@ -250,8 +233,9 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-// 🚨 NAYA CODE: User Login (Account mein ghusna)
-// 🚨 NAYA SUPER LOGIN: Ab yeh Role aur Department bhi check karega
+// -----------------------------------------------------------------
+// 🔐 7. SUPER LOGIN (Role check ke sath)
+// -----------------------------------------------------------------
 app.post('/api/login', express.json(), async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -271,31 +255,21 @@ app.post('/api/login', express.json(), async (req, res) => {
     }
 });
 
-
-
-app.listen(PORT, () => {
-    console.log(`🚀 Pro Backend Server is running on http://localhost:${PORT}`);
-});
-
-
-
-// 🧠 SMART FILTER API: Jiska jo role hai, usko wahi data milega
+// -----------------------------------------------------------------
+// 📱 8. APP SMART FILTER API (My Tracks ke liye)
+// -----------------------------------------------------------------
 app.get('/api/smart-complaints', async (req, res) => {
-    const { role, fullName, department } = req.query; // App se pata chalega kaun mang raha hai data
-    
+    const { role, fullName, department } = req.query; 
     try {
         let query = "";
         let params = [];
 
         if (role === 'Admin') {
-            // Admin ko sab kuch dikhega
             query = "SELECT * FROM complaints ORDER BY id DESC";
         } else if (role === 'Department') {
-            // PWD/NHAI ko sirf apna kaam dikhega
             query = "SELECT * FROM complaints WHERE assigned_to = $1 ORDER BY id DESC";
             params = [department];
         } else {
-            // Citizen ko sirf apne report kiye gaddhe dikhenge
             query = "SELECT * FROM complaints WHERE reported_by = $1 ORDER BY id DESC";
             params = [fullName];
         }
@@ -306,4 +280,11 @@ app.get('/api/smart-complaints', async (req, res) => {
         console.error("Fetch error:", error);
         res.status(500).json({ error: "Data laane mein problem aayi" });
     }
+});
+
+// -----------------------------------------------------------------
+// 🚀 SERVER START KAREIN (Sabse end mein hona chahiye)
+// -----------------------------------------------------------------
+app.listen(PORT, () => {
+    console.log(`🚀 Pro Backend Server is running on http://localhost:${PORT}`);
 });
